@@ -9,6 +9,7 @@ export type VaultItem = {
   createdAt: number;
 };
 
+
 const KEY = "sov_vault_v1";
 
 export function readVault(): VaultItem[] {
@@ -22,8 +23,23 @@ export function readVault(): VaultItem[] {
   }
 }
 
+export function writeVault(items: VaultItem[]) {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(KEY, JSON.stringify(items));
+}
+
 export function addVaultItem(item: VaultItem) {
   const curr = readVault();
   curr.unshift(item);
-  localStorage.setItem(KEY, JSON.stringify(curr));
+  writeVault(curr);
+}
+
+export function deleteVaultItem(id: string) {
+  const curr = readVault().filter((it) => it.id !== id);
+  writeVault(curr);
+}
+
+export function clearVault() {
+  if (typeof window === "undefined") return;
+  localStorage.removeItem(KEY);
 }

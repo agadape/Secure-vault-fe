@@ -2,7 +2,11 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useAccount, useSignMessage } from "wagmi";
-import { readVault, type VaultItem } from "@/lib/storage/vault";
+import {
+  readVault,
+  deleteVaultItem,
+  type VaultItem,
+} from "@/lib/storage/vault";
 import { decryptToBytes } from "@/lib/crypto/decrypt";
 
 function shortAddress(addr?: string) {
@@ -24,7 +28,6 @@ function bytesToObjectUrl(bytes: Uint8Array, mime?: string) {
   return URL.createObjectURL(blob);
 }
 
-
 export default function VaultGallery() {
   const { address, isConnected } = useAccount();
   const { signMessageAsync } = useSignMessage();
@@ -36,12 +39,10 @@ export default function VaultGallery() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // load from localStorage
   useEffect(() => {
     setItems(readVault());
   }, []);
 
-  // cleanup objectURL
   useEffect(() => {
     return () => {
       if (previewUrl) URL.revokeObjectURL(previewUrl);
@@ -50,8 +51,9 @@ export default function VaultGallery() {
 
   const myItems = useMemo(() => {
     if (!address) return items;
-    // optional: filter by current wallet (biar ga campur)
-    return items.filter((it) => it.walletAddress?.toLowerCase() === address.toLowerCase());
+    return items.filter(
+      (it) => it.walletAddress?.toLowerCase() === address.toLowerCase()
+    );
   }, [items, address]);
 
   async function onOpen(item: VaultItem) {
@@ -71,7 +73,7 @@ export default function VaultGallery() {
     try {
       setBusyId(item.id);
 
-      // Signature message MUST match encryption message
+      // MUST match encrypt message
       const message = `SecureOnchainVault:encrypt:v1:${item.docHash}`;
       const signatureHex = await signMessageAsync({ message });
 
@@ -98,10 +100,20 @@ export default function VaultGallery() {
     setError(null);
   }
 
+  function onDelete(id: string) {
+    deleteVaultItem(id);
+    const next = readVault();
+    setItems(next);
+
+    if (selected?.id === id) {
+      onClosePreview();
+    }
+  }
+
   if (!myItems.length) {
     return (
       <div className="rounded-2xl border border-white/10 bg-black/20 p-4 text-sm text-gray-400">
-        Belum ada dokumen. Coba scan dulu dari halaman /scan.
+        Belum ada dokumen untuk wallet ini. Coba scan dulu dari halaman /scan.
       </div>
     );
   }
@@ -119,30 +131,46 @@ export default function VaultGallery() {
           <button
             key={it.id}
             onClick={() => onOpen(it)}
-            className="w-full rounded-2xl border border-white/10 bg-black/20 p-4 text-left hover:bg-black/30"
+            className="w-full rounded-2xl border border-white/10 bg-black/20 p-4 text-left active:scale-[0.99]"
           >
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <div className="text-sm font-medium text-white">
                   Document #{myItems.length - idx}
                 </div>
+
                 <div className="mt-1 text-xs text-gray-400">
                   CID: <span className="font-mono break-all">{it.cid}</span>
                 </div>
+
                 <div className="mt-1 text-xs text-gray-500">
-                  Hash: <span className="font-mono break-all">{it.docHash}</span>
+                  Hash:{" "}
+                  <span className="font-mono break-all">{it.docHash}</span>
                 </div>
+
                 <div className="mt-2 text-xs text-gray-500">
                   Owner:{" "}
-                  <span className="font-mono">{shortAddress(it.walletAddress)}</span>{" "}
+                  <span className="font-mono">
+                    {shortAddress(it.walletAddress)}
+                  </span>{" "}
                   • {formatTs(it.createdAt)}
                 </div>
-              </div>
 
-              <div className="shrink-0">
-                <span className="rounded-full border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-gray-300">
-                  {busyId === it.id ? "Decrypting..." : "Open"}
-                </span>
+                <div className="mt-2 flex gap-2">
+                  <span className="rounded-full border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-gray-300">
+                    {busyId === it.id ? "Decrypting..." : "Open"}
+                  </span>
+
+                  <button
+                    className="rounded-full border border-white/15 bg-black/30 px-2 py-1 text-[11px] text-gray-200"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDelete(it.id);
+                    }}
+                  >
+                    Delete
+                  </button>
+                </div>
               </div>
             </div>
           </button>
@@ -171,8 +199,8 @@ export default function VaultGallery() {
           </div>
 
           <div className="mt-2 text-xs text-gray-500">
-            MIME: <span className="font-mono">{selected.payload.mime}</span> • Size:{" "}
-            {Math.round(selected.payload.size / 1024)} KB
+            MIME: <span className="font-mono">{selected.payload.mime}</span> •
+            Size: {Math.round(selected.payload.size / 1024)} KB
           </div>
         </div>
       )}

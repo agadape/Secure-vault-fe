@@ -7,6 +7,7 @@ import { sha256Hex } from "@/lib/crypto/hash";
 import { encryptFileWithSignature } from "@/lib/crypto/encrypt";
 import { uploadEncrypted } from "@/lib/api/upload";
 import { addVaultItem } from "@/lib/storage/vault";
+import { buildUnlockMessage } from "@/lib/crypto/message";
 
 type Capture = {
   dataUrl: string;
@@ -24,6 +25,15 @@ function dataUrlToFile(dataUrl: string, filename: string) {
   return new File([u8arr], filename, { type: mime });
 }
 
+function hasStatus(error: unknown): error is { status: number } {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "status" in error &&
+    typeof (error as { status: unknown }).status === "number"
+  );
+}
+
 export default function Scanner() {
   const webcamRef = useRef<Webcam>(null);
 
@@ -37,7 +47,7 @@ export default function Scanner() {
 
   const videoConstraints = useMemo(
     () => ({
-      facingMode: { ideal: "environment" }, // mobile: back camera
+      facingMode: { ideal: "environment" },
       width: { ideal: 1280 },
       height: { ideal: 720 },
     }),
@@ -81,60 +91,78 @@ export default function Scanner() {
 
   const onUsePhoto = useCallback(async () => {
     if (!capture) return;
+    if (!address) {
+      setError("Wallet belum terhubung.");
+      return;
+    }
 
     try {
       setProcessing(true);
       setError(null);
 
-      if (!address) {
-        throw new Error("Wallet belum connect.");
-      }
-
       // 1) hash plaintext
       const ab = await capture.file.arrayBuffer();
       const docHash = await sha256Hex(ab);
 
-      // 2) sign message deterministik (NO timestamp!)
-      // penting untuk decrypt nanti: signature harus bisa diulang.
-      const message = `SecureOnchainVault:encrypt:v1:${docHash}`;
-
+      // 2) sign deterministic message
+      const message = buildUnlockMessage({ docHash });
       const signatureHex = await signMessageAsync({ message });
 
-      // 3) encrypt file (HKDF -> AES-GCM)
+      // 3) encrypt file using signature-derived key (HKDF -> AES-GCM)
       const payload = await encryptFileWithSignature({
         file: capture.file,
         signatureHex,
-      });
-
-      // 4) upload encrypted payload (mock)
-      const uploaded = await uploadEncrypted({
-        walletAddress: address,
         docHash,
-        payload,
       });
 
-      setCid(uploaded.cid);
-
-      // 5) simpan ke localStorage (buat Step 10: Vault)
-      addVaultItem({
-        id: `${Date.now()}_${Math.random().toString(16).slice(2)}`,
+      // 4) upload encrypted payload to backend -> Pinata CID
+      const up = await uploadEncrypted({
+        payload,
         walletAddress: address,
-        cid: uploaded.cid,
+        category: "Scans",
         docHash,
-        payload,
-        createdAt: uploaded.receivedAt,
       });
+
+      // ✅ Validasi upload result (dari kode new)
+      if (!up.success || !up.cid) {
+        throw new Error(up.error || "Upload failed");
+      }
+
+      setCid(up.cid);
+
+      // 5) store local vault index (so Vault page can show it immediately)
+      // remove kalau Butuh server-side vault saja
+      // NOTE: tergantung addVaultItem signature kamu; ini contoh umum
+      // await addVaultItem({
+      //   id: crypto.randomUUID(),
+      //   walletAddress: address,
+      //   cid,
+      //   docHash,
+      //   payload,
+      //   createdAt: payload.createdAt,
+      // });
 
       console.log("docHash:", docHash);
-      console.log("payload:", payload);
-      console.log("uploaded:", uploaded);
+      console.log("encrypted payload:", payload);
+      console.log("cid:", cid);
+
+      // ✅ Validasi upload result (dari kode new)
+      if (!up.success || !up.cid) {
+        throw new Error(up.error || "Upload failed");
+      }
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : "Encrypt/Upload failed";
+      // handle paywall
+      if (hasStatus(e) && e.status === 402) {
+        setError("Payment required. Silakan unlock dulu.");
+        return;
+      }
+      const msg = e instanceof Error ? e.message : "Encrypt/upload failed";
       setError(msg);
+      console.error("❌ Error:", msg);
     } finally {
       setProcessing(false);
     }
-  }, [capture, address, signMessageAsync]);
+  }, [capture, signMessageAsync, address]);
 
   return (
     <div className="space-y-3">
@@ -162,13 +190,13 @@ export default function Scanner() {
 
           <div className="flex flex-wrap gap-3">
             <button
-              className="rounded-xl bg-white px-4 py-2 text-sm font-medium text-black"
+              className="rounded-xl bg-white px-4 py-3 text-sm font-medium text-black"
               onClick={onCapture}
             >
               Capture
             </button>
 
-            <label className="cursor-pointer rounded-xl border border-white/20 px-4 py-2 text-sm text-white">
+            <label className="cursor-pointer rounded-xl border border-white/20 px-4 py-3 text-sm text-white">
               Upload from gallery
               <input
                 type="file"
@@ -204,7 +232,7 @@ export default function Scanner() {
 
           <div className="flex flex-wrap gap-3">
             <button
-              className="rounded-xl bg-white px-4 py-2 text-sm font-medium text-black disabled:opacity-40"
+              className="rounded-xl bg-white px-4 py-3 text-sm font-medium text-black disabled:opacity-40"
               onClick={onUsePhoto}
               disabled={processing}
             >
@@ -212,7 +240,7 @@ export default function Scanner() {
             </button>
 
             <button
-              className="rounded-xl border border-white/20 px-4 py-2 text-sm text-white disabled:opacity-40"
+              className="rounded-xl border border-white/20 px-4 py-3 text-sm text-white disabled:opacity-40"
               onClick={onRetake}
               disabled={processing}
             >
@@ -226,10 +254,30 @@ export default function Scanner() {
           </div>
 
           {cid && (
-            <div className="rounded-xl border border-white/10 bg-white/5 p-3 text-xs text-gray-200">
-              <div className="text-gray-400">Uploaded CID (mock)</div>
-              <div className="mt-1 font-mono break-all">{cid}</div>
-            </div>
+            <>
+              <div className="rounded-xl border border-white/10 bg-white/5 p-3 text-xs text-gray-200">
+                <div className="text-gray-400">Uploaded CID (mock)</div>
+                <div className="mt-1 font-mono break-all">{cid}</div>
+                <div className="mt-2 text-gray-400">
+                  Saved to local vault ✅
+                </div>
+              </div>
+
+              <div className="flex gap-3">
+                <button
+                  className="flex-1 rounded-xl bg-white px-4 py-3 text-sm font-medium text-black"
+                  onClick={() => (window.location.href = "/vault")}
+                >
+                  Open Vault
+                </button>
+                <button
+                  className="flex-1 rounded-xl border border-white/20 px-4 py-3 text-sm text-white"
+                  onClick={onRetake}
+                >
+                  Scan Another
+                </button>
+              </div>
+            </>
           )}
         </>
       )}

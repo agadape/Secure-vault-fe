@@ -8,6 +8,7 @@ import { usePaymentStatus } from "@/hooks/usePaymentStatus";
 import LoadingLottie from "@/components/lottie/Loading";
 import { useRouter } from "next/navigation";
 
+// OPTIONAL: kalau kamu sudah pakai Privy button, uncomment:
 import PrivyLoginButton from "@/src/components/PrivyLoginButton";
 import { usePrivy } from "@privy-io/react-auth";
 
@@ -22,20 +23,17 @@ function shortAddress(addr?: string) {
 }
 
 export default function AuthGate() {
+  const router = useRouter();
   const { address, isConnected } = useAccount();
 
-  // hanya untuk "user pernah menutup modal"
-  const [paywallDismissed, setPaywallDismissed] = useState(false);
-
-  const { data, loading, error } = usePaymentStatus(address);
-
-  //cek auth
+  // OPTIONAL: kalau kamu sudah pakai privy
   const { authenticated } = usePrivy();
+
+  const [paywallDismissed, setPaywallDismissed] = useState(false);
+  const { data, loading, error } = usePaymentStatus(address);
 
   const isInactive = isConnected && data?.status === "inactive";
   const isActive = isConnected && data?.status === "active";
-
-  // Modal open = derived value (no effect!)
   const paywallOpen = isInactive && !paywallDismissed;
 
   const shouldLock = useMemo(() => {
@@ -46,34 +44,34 @@ export default function AuthGate() {
     return data.status !== "active";
   }, [isConnected, loading, error, data]);
 
-  const router = useRouter();
-
   return (
-    <div className="mt-6 space-y-4">
-      <div className="rounded-2xl border border-white/10 bg-white/5 p-5">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+    <div className="mt-5">
+      {/* Card */}
+      <div className="rounded-3xl border border-white/10 bg-white/5 p-5 shadow-2xl">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
             <div className="text-xs uppercase tracking-wide text-gray-400">
               Account
             </div>
 
-            <div className="mt-1 flex items-center gap-3">
-              <div className="min-w-0">
-                <div className="truncate font-mono text-sm text-white">
-                  {isConnected ? address : "Not connected"}
-                </div>
-                <div className="mt-1 text-xs text-gray-400">
-                  {isConnected
-                    ? `Short: ${shortAddress(address)}${
-                        authenticated ? " • Privy" : ""
-                      }`
-                    : "Login (Privy) atau connect wallet untuk lanjut"}
-                </div>
+            <div className="mt-1">
+              <div className="truncate font-mono text-sm text-white">
+                {isConnected ? address : "Not connected"}
+              </div>
+              <div className="mt-1 text-xs text-gray-400">
+                {isConnected
+                  ? `Short: ${shortAddress(address)}${authenticated ? " • Privy" : ""}`
+                  : "Login / connect untuk lanjut"}
               </div>
             </div>
 
-            <div className="mt-4 text-sm text-gray-300">
-              {loading && <LoadingLottie />}
+            <div className="mt-4 text-sm text-gray-200">
+              {loading && (
+                <div className="flex items-center gap-2">
+                  <LoadingLottie />
+                  <span className="text-gray-300">Checking status...</span>
+                </div>
+              )}
 
               {!loading && error && (
                 <span className="text-red-400">Status error: {error}</span>
@@ -96,33 +94,38 @@ export default function AuthGate() {
             </div>
           </div>
 
+          {/* Actions right */}
           <div className="shrink-0 flex flex-col gap-2 sm:flex-row sm:items-center">
+            {/* OPTIONAL: enable kalau Privy sudah siap */}
             <PrivyLoginButton />
             <ConnectWallet />
           </div>
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-3">
-        <button
-          className="rounded-xl bg-white px-4 py-2 text-sm font-medium text-black disabled:opacity-40"
-          disabled={shouldLock}
-          onClick={() => router.push("/scan")}
-        >
-          Scan / Upload
-        </button>
+      {/* Sticky Bottom Actions */}
+      <div className="sticky bottom-0 left-0 right-0 -mx-4 mt-6 border-t border-white/10 bg-black/80 px-4 py-3 backdrop-blur">
+        <div className="flex gap-3">
+          <button
+            className="flex-1 rounded-xl bg-white px-4 py-3 text-sm font-medium text-black disabled:opacity-40"
+            disabled={shouldLock}
+            onClick={() => router.push("/scan")}
+          >
+            Scan / Upload
+          </button>
 
-        <button
-          className="rounded-xl border border-white/20 px-4 py-2 text-sm text-white disabled:opacity-40"
-          disabled={shouldLock}
-          onClick={() => router.push("/vault")}
-        >
-          Open Vault
-        </button>
+          <button
+            className="flex-1 rounded-xl border border-white/20 px-4 py-3 text-sm text-white disabled:opacity-40"
+            disabled={shouldLock}
+            onClick={() => router.push("/vault")}
+          >
+            Open Vault
+          </button>
+        </div>
 
         {isInactive && paywallDismissed && (
           <button
-            className="ml-auto rounded-xl bg-black px-4 py-2 text-sm text-white"
+            className="mt-3 w-full rounded-xl bg-black px-4 py-3 text-sm text-white"
             onClick={() => setPaywallDismissed(false)}
           >
             Unlock
